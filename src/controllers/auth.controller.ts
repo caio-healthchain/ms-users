@@ -35,16 +35,23 @@ export class AuthController {
    */
   async azureCallback(req: Request, res: Response) {
     try {
-      const { code } = req.body;
+      const { code, azureAccessToken, azureIdToken } = req.body;
 
-      if (!code) {
+      // Suportar ambos os fluxos: código de autorização ou access token
+      let result;
+      
+      if (azureAccessToken) {
+        // Novo fluxo: validar access token do Azure AD
+        result = await authService.authenticateWithAzureToken(azureAccessToken, azureIdToken);
+      } else if (code) {
+        // Fluxo antigo: trocar código por token
+        result = await authService.authenticateWithAzureAd(code);
+      } else {
         return res.status(400).json({
-          error: 'Código de autorização não fornecido',
+          error: 'Código de autorização ou access token não fornecido',
           statusCode: 400,
         });
       }
-
-      const result = await authService.authenticateWithAzureAd(code);
 
       // Atualizar logs com IP e User-Agent
       const ipAddress = req.ip || req.socket.remoteAddress || 'unknown';

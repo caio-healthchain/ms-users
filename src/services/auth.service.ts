@@ -1,6 +1,7 @@
 import { ConfidentialClientApplication, AuthorizationCodeRequest } from '@azure/msal-node';
 import { PrismaClient } from '@prisma/client';
 import jwt from 'jsonwebtoken';
+import axios from 'axios';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
@@ -19,7 +20,95 @@ const cca = new ConfidentialClientApplication(msalConfig);
 
 export class AuthService {
   /**
-   * Autentica usuário via Azure AD usando código de autorização
+   * Autentica usuário via Azure AD usando access token já obtido
+   */
+  async authenticateWithAzureToken(azureAccessToken: string, azureIdToken?: string) {
+    try {
+      logger.info('Iniciando autenticação com Azure AD Token');
+
+      // Validar token e obter informações do usuário do Microsoft Graph
+      const graphResponse = await axios.get('https://graph.microsoft.com/v1.0/me', {
+        headers: {
+          Authorization: `Bearer ${azureAccessToken}`,
+        },
+      });
+
+      const azureUser = graphResponse.data;
+
+      logger.info(`Usuário autenticado: ${azureUser.mail || azureUser.userPrincipalName}`);
+
+      // Buscar ou criar usuário no banco
+      let user = await prisma.user.findUnique({
+        where: { azureAdId: azureUser.id },
+      });
+
+      if (!user) {
+        // Criar novo usuário
+        user = await prisma.user.create({
+          data: {
+            name: azureUser.displayName || azureUser.mail || azureUser.userPrincipalName,
+            email: azureUser.mail || azureUser.userPrincipalName,
+            azureAdId: azureUser.id,
+            isActive: true,
+          },
+        });
+
+        logger.info(`Novo usuário criado: ${user.id}`);
+      } else {
+        // Atualizar última autenticação
+        user = await prisma.user.update({
+          where: { id: user.id },
+          data: {
+            updatedAt: new Date(),
+          },
+        });
+      }
+
+      // Buscar hospitais e perfis do usuário
+      const userHospitalProfiles = await prisma.userHospitalProfile.findMany({
+        where: {
+          userId: user.id,
+          isActive: true,
+        },
+        include: {
+          hospital: true,
+          profile: true,
+        },
+      });
+
+      // Gerar tokens JWT internos
+      const { accessToken, refreshToken } = this.generateTokens(user.id, user.email);
+
+      // Registrar log de auditoria
+      await prisma.auditLog.create({
+        data: {
+          userId: user.id,
+          userName: user.name,
+          userEmail: user.email,
+          action: 'LOGIN',
+          description: 'Login via Azure AD SSO',
+          ipAddress: 'unknown', // Será preenchido pelo controller
+          userAgent: 'unknown', // Será preenchido pelo controller
+          metadata: {
+            azureAdId: user.azureAdId,
+          },
+        },
+      });
+
+      return {
+        accessToken,
+        refreshToken,
+        user,
+        hospitals: userHospitalProfiles,
+      };
+    } catch (error: any) {
+      logger.error('Erro na autenticação Azure AD:', error);
+      throw new Error(`Falha na autenticação: ${error.message}`);
+    }
+  }
+
+  /**
+   * Autentica usuário via Azure AD usando código de autorização (método antigo)
    */
   async authenticateWithAzureAd(authCode: string) {
     try {
@@ -103,49 +192,42 @@ export class AuthService {
       });
 
       return {
-        user,
         accessToken,
         refreshToken,
+        user,
         hospitals: userHospitalProfiles,
       };
     } catch (error: any) {
       logger.error('Erro na autenticação Azure AD:', error);
-      throw new Error(`Erro na autenticação: ${error.message}`);
+      throw new Error(`Falha na autenticação: ${error.message}`);
     }
   }
 
   /**
-   * Gera tokens JWT (access e refresh)
+   * Gera tokens JWT para autenticação interna
    */
-  generateTokens(userId: string, email: string) {
+  private generateTokens(userId: string, email: string) {
     const accessToken = jwt.sign(
-      { userId, email, type: 'access' },
+      {
+        userId,
+        email,
+        type: 'access',
+      },
       config.jwtSecret,
-      { expiresIn: config.jwtExpiresIn } as jwt.SignOptions
+      { expiresIn: config.jwtExpiresIn }
     );
 
     const refreshToken = jwt.sign(
-      { userId, email, type: 'refresh' },
+      {
+        userId,
+        email,
+        type: 'refresh',
+      },
       config.jwtSecret,
-      { expiresIn: config.jwtRefreshExpiresIn } as jwt.SignOptions
+      { expiresIn: config.jwtRefreshExpiresIn }
     );
 
     return { accessToken, refreshToken };
-  }
-
-  /**
-   * Verifica e decodifica token JWT
-   */
-  verifyToken(token: string) {
-    try {
-      return jwt.verify(token, config.jwtSecret) as {
-        userId: string;
-        email: string;
-        type: 'access' | 'refresh';
-      };
-    } catch (error) {
-      throw new Error('Token inválido ou expirado');
-    }
   }
 
   /**
@@ -153,7 +235,7 @@ export class AuthService {
    */
   async refreshAccessToken(refreshToken: string) {
     try {
-      const decoded = this.verifyToken(refreshToken);
+      const decoded = jwt.verify(refreshToken, config.jwtSecret) as any;
 
       if (decoded.type !== 'refresh') {
         throw new Error('Token inválido');
@@ -167,25 +249,22 @@ export class AuthService {
         throw new Error('Usuário não encontrado ou inativo');
       }
 
-      const { accessToken, refreshToken: newRefreshToken } = this.generateTokens(
-        user.id,
-        user.email
-      );
+      const tokens = this.generateTokens(user.id, user.email);
 
-      return { accessToken, refreshToken: newRefreshToken };
+      return tokens;
     } catch (error: any) {
       logger.error('Erro ao renovar token:', error);
-      throw new Error(`Erro ao renovar token: ${error.message}`);
+      throw new Error('Token inválido ou expirado');
     }
   }
 
   /**
-   * Seleciona hospital e cria sessão
+   * Seleciona hospital e gera novo token com contexto
    */
-  async selectHospital(userId: string, hospitalId: string, ipAddress: string, userAgent: string) {
+  async selectHospital(userId: string, hospitalId: string) {
     try {
       // Verificar se usuário tem acesso ao hospital
-      const userHospitalProfiles = await prisma.userHospitalProfile.findMany({
+      const userHospitalProfile = await prisma.userHospitalProfile.findFirst({
         where: {
           userId,
           hospitalId,
@@ -197,118 +276,74 @@ export class AuthService {
         },
       });
 
-      if (userHospitalProfiles.length === 0) {
+      if (!userHospitalProfile) {
         throw new Error('Usuário não tem acesso a este hospital');
       }
 
-      const hospital = userHospitalProfiles[0].hospital;
-      const profiles = userHospitalProfiles.map((uhp) => uhp.profile);
+      const hospital = userHospitalProfile.hospital;
 
-      // Gerar novo token com contexto do hospital
-      const user = await prisma.user.findUnique({ where: { id: userId } });
-      if (!user) throw new Error('Usuário não encontrado');
-
-      const accessToken = jwt.sign(
-        {
-          userId: user.id,
-          email: user.email,
-          hospitalId: hospital.id,
-          hospitalCode: hospital.code,
-          profiles: profiles.map((p) => p.code),
-          type: 'access',
-        },
-        config.jwtSecret,
-        { expiresIn: config.jwtExpiresIn } as jwt.SignOptions
-      );
-
-      // Criar sessão
-      const expiresAt = new Date();
-      expiresAt.setHours(expiresAt.getHours() + 24);
-
-      await prisma.userSession.create({
-        data: {
-          userId: user.id,
-          hospitalId: hospital.id,
-          accessToken,
-          expiresAt,
-          ipAddress,
-          userAgent,
+      // Buscar todos os perfis do usuário neste hospital
+      const profiles = await prisma.userHospitalProfile.findMany({
+        where: {
+          userId,
+          hospitalId,
           isActive: true,
         },
+        include: {
+          profile: true,
+        },
       });
+
+      // Gerar novo token com contexto do hospital
+      const contextToken = jwt.sign(
+        {
+          userId,
+          hospitalId,
+          hospitalCode: hospital.code,
+          profiles: profiles.map((p) => ({
+            id: p.profile.id,
+            code: p.profile.code,
+            name: p.profile.name,
+            allowedModules: p.profile.allowedModules,
+          })),
+          type: 'context',
+        },
+        config.jwtSecret,
+        { expiresIn: config.jwtExpiresIn }
+      );
+
+      // Determinar URL de redirecionamento
+      const subdomain = hospital.subdomain || `${hospital.code}-lazarus`;
+      const customDomain = hospital.customDomain;
+      
+      const redirectUrl = customDomain
+        ? `https://${customDomain}/modules`
+        : `https://${subdomain}.healthchainsolutions.com.br/modules`;
 
       // Registrar log
       await prisma.auditLog.create({
         data: {
-          userId: user.id,
-          userName: user.name,
-          userEmail: user.email,
-          action: 'ACCESS_HOSPITAL',
-          description: `Acesso ao hospital: ${hospital.name}`,
-          hospitalId: hospital.id,
-          ipAddress,
-          userAgent,
+          userId,
+          userName: '',
+          userEmail: '',
+          action: 'SELECT_HOSPITAL',
+          description: `Selecionou hospital: ${hospital.name}`,
           metadata: {
+            hospitalId,
             hospitalCode: hospital.code,
-            profiles: profiles.map((p) => p.code),
           },
         },
       });
 
-      // Construir URL de redirecionamento
-      const redirectUrl = hospital.customDomain
-        ? `https://${hospital.customDomain}/modules`
-        : `https://${hospital.subdomain}.healthchainsolutions.com.br/modules`;
-
       return {
-        accessToken,
         redirectUrl,
         hospital,
-        profiles,
+        profiles: profiles.map((p) => p.profile),
+        contextToken,
       };
     } catch (error: any) {
       logger.error('Erro ao selecionar hospital:', error);
-      throw new Error(`Erro ao selecionar hospital: ${error.message}`);
-    }
-  }
-
-  /**
-   * Logout do usuário
-   */
-  async logout(userId: string, accessToken: string) {
-    try {
-      // Desativar sessão
-      await prisma.userSession.updateMany({
-        where: {
-          userId,
-          accessToken,
-        },
-        data: {
-          isActive: false,
-        },
-      });
-
-      // Registrar log
-      const user = await prisma.user.findUnique({ where: { id: userId } });
-      if (user) {
-        await prisma.auditLog.create({
-          data: {
-            userId: user.id,
-            userName: user.name,
-            userEmail: user.email,
-            action: 'LOGOUT',
-            description: 'Logout do sistema',
-            ipAddress: 'unknown',
-            userAgent: 'unknown',
-            metadata: {},
-          },
-        });
-      }
-
-      logger.info(`Logout realizado: ${userId}`);
-    } catch (error: any) {
-      logger.error('Erro ao fazer logout:', error);
-      throw new Error(`Erro ao fazer logout: ${error.message}`);
+      throw error;
     }
   }
 }
