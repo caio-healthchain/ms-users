@@ -10,9 +10,9 @@ datasource db {
 // Modelo de Usuário
 model User {
   id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
 
   // Informações básicas
   name      String
@@ -22,11 +22,11 @@ model User {
   avatar    String?
 
   // Azure AD Integration
-  azureAdId       String?  @unique
-  azureAdTenantId String?
+  azureAdId       String?  @unique @map("azure_ad_id")
+  azureAdTenantId String? @map("azure_ad_tenant_id")
   
   // Status
-  isActive Boolean @default(true)
+  isActive Boolean @default(true) @map("is_active")
   
   // Relacionamentos
   userHospitalProfiles UserHospitalProfile[]
@@ -41,8 +41,8 @@ model User {
 // Perfis disponíveis no sistema
 model Profile {
   id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Informações do perfil
   code        String   @unique // GERENCIAL, AUDITOR, ANALISTA
@@ -50,13 +50,13 @@ model Profile {
   description String?
   
   // Módulos permitidos (JSON array)
-  allowedModules Json // ["gerencial", "auditor", "analista"]
+  allowedModules Json @map("allowed_modules") // ["gerencial", "auditor", "analista"]
   
   // Permissões (JSON)
   permissions Json
   
   // Status
-  isActive Boolean @default(true)
+  isActive Boolean @default(true) @map("is_active")
 
   // Relacionamentos
   userHospitalProfiles UserHospitalProfile[]
@@ -69,9 +69,9 @@ model Profile {
 // Hospital (informações básicas - detalhes no ms-hospital-integration)
 model Hospital {
   id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-  deletedAt DateTime?
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
+  deletedAt DateTime? @map("deleted_at")
 
   // Identificação
   code        String   @unique // h9j, hsl, etc
@@ -80,17 +80,17 @@ model Hospital {
   
   // Configuração de tenant
   subdomain   String   @unique // h9j-lazarus
-  customDomain String? @unique // lazarus.h9j.com.br
+  customDomain String? @unique @map("custom_domain") // lazarus.h9j.com.br
   
   // Azure AD Tenant (cada hospital pode ter seu próprio tenant)
-  azureTenantId String?
+  azureTenantId String? @map("azure_tenant_id")
   
   // Logo e branding
-  logoUrl     String?
-  primaryColor String? // #1E40AF
+  logoUrl     String? @map("logo_url")
+  primaryColor String? @map("primary_color") // #1E40AF
   
   // Status
-  isActive Boolean @default(true)
+  isActive Boolean @default(true) @map("is_active")
   
   // Relacionamentos
   userHospitalProfiles UserHospitalProfile[]
@@ -104,26 +104,26 @@ model Hospital {
 // Relacionamento N:N entre User, Hospital e Profile
 model UserHospitalProfile {
   id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Relacionamentos
-  userId     String
-  hospitalId String
-  profileId  String
+  userId     String @map("user_id")
+  hospitalId String @map("hospital_id")
+  profileId  String @map("profile_id")
   
   user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
   hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
   profile  Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
   
   // Status
-  isActive Boolean @default(true)
+  isActive Boolean @default(true) @map("is_active")
   
   // Metadados
-  grantedBy   String? // ID do usuário que concedeu o acesso
-  grantedAt   DateTime @default(now())
-  revokedBy   String?
-  revokedAt   DateTime?
+  grantedBy   String? @map("granted_by") // ID do usuário que concedeu o acesso
+  grantedAt   DateTime @default(now()) @map("granted_at")
+  revokedBy   String? @map("revoked_by")
+  revokedAt   DateTime? @map("revoked_at")
 
   @@unique([userId, hospitalId, profileId])
   @@index([userId])
@@ -136,12 +136,12 @@ model UserHospitalProfile {
 // Log de auditoria de ações de usuários
 model AuditLog {
   id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
+  createdAt DateTime @default(now()) @map("created_at")
 
   // Usuário
-  userId   String
-  userName String
-  userEmail String
+  userId   String @map("user_id")
+  userName String @map("user_name")
+  userEmail String @map("user_email")
   
   user User @relation(fields: [userId], references: [id], onDelete: Cascade)
 
@@ -150,12 +150,12 @@ model AuditLog {
   description String
   
   // Contexto
-  hospitalId String?
-  profileId  String?
+  hospitalId String? @map("hospital_id")
+  profileId  String? @map("profile_id")
   
   // Dados técnicos
-  ipAddress String
-  userAgent String
+  ipAddress String @map("ip_address")
+  userAgent String @map("user_agent")
   
   // Metadados
   metadata Json?
@@ -170,26 +170,26 @@ model AuditLog {
 // Sessões de usuário (para controle de acesso multi-tenant)
 model UserSession {
   id        String   @id @default(cuid())
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  createdAt DateTime @default(now()) @map("created_at")
+  updatedAt DateTime @updatedAt @map("updated_at")
 
   // Usuário
-  userId String
+  userId String @map("user_id")
   
   // Hospital selecionado
-  hospitalId String
+  hospitalId String @map("hospital_id")
   
   // Token
-  accessToken  String   @unique
-  refreshToken String?  @unique
-  expiresAt    DateTime
+  accessToken  String   @unique @map("access_token")
+  refreshToken String?  @unique @map("refresh_token")
+  expiresAt    DateTime @map("expires_at")
   
   // Dados técnicos
-  ipAddress String
-  userAgent String
+  ipAddress String @map("ip_address")
+  userAgent String @map("user_agent")
   
   // Status
-  isActive Boolean @default(true)
+  isActive Boolean @default(true) @map("is_active")
   
   @@index([userId])
   @@index([hospitalId])
