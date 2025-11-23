@@ -1,6 +1,6 @@
 import { ConfidentialClientApplication, AuthorizationCodeRequest } from '@azure/msal-node';
 import { PrismaClient } from '@prisma/client';
-import jwt from 'jsonwebtoken';
+import jwt, { SignOptions } from 'jsonwebtoken';
 import axios from 'axios';
 import { config } from '../config';
 import { logger } from '../utils/logger';
@@ -207,6 +207,9 @@ export class AuthService {
    * Gera tokens JWT para autenticação interna
    */
   private generateTokens(userId: string, email: string) {
+    const accessOptions: SignOptions = { expiresIn: config.jwtExpiresIn as any };
+    const refreshOptions: SignOptions = { expiresIn: config.jwtRefreshExpiresIn as any };
+
     const accessToken = jwt.sign(
       {
         userId,
@@ -214,7 +217,7 @@ export class AuthService {
         type: 'access',
       },
       config.jwtSecret,
-      { expiresIn: config.jwtExpiresIn }
+      accessOptions
     );
 
     const refreshToken = jwt.sign(
@@ -224,10 +227,22 @@ export class AuthService {
         type: 'refresh',
       },
       config.jwtSecret,
-      { expiresIn: config.jwtRefreshExpiresIn }
+      refreshOptions
     );
 
     return { accessToken, refreshToken };
+  }
+
+  /**
+   * Verifica e decodifica um JWT
+   */
+  verifyToken(token: string) {
+    try {
+      const decoded = jwt.verify(token, config.jwtSecret);
+      return decoded;
+    } catch (error: any) {
+      throw new Error('Token inválido ou expirado');
+    }
   }
 
   /**
@@ -255,6 +270,37 @@ export class AuthService {
     } catch (error: any) {
       logger.error('Erro ao renovar token:', error);
       throw new Error('Token inválido ou expirado');
+    }
+  }
+
+  /**
+   * Faz logout do usuário (registra log de auditoria)
+   */
+  async logout(userId: string, token: string) {
+    try {
+      const user = await prisma.user.findUnique({
+        where: { id: userId },
+      });
+
+      if (user) {
+        await prisma.auditLog.create({
+          data: {
+            userId: user.id,
+            userName: user.name,
+            userEmail: user.email,
+            action: 'LOGOUT',
+            description: 'Logout do sistema',
+            ipAddress: 'unknown',
+            userAgent: 'unknown',
+            metadata: {},
+          },
+        });
+      }
+
+      logger.info(`Usuário ${userId} fez logout`);
+    } catch (error: any) {
+      logger.error('Erro ao fazer logout:', error);
+      throw error;
     }
   }
 
@@ -295,6 +341,7 @@ export class AuthService {
       });
 
       // Gerar novo token com contexto do hospital
+      const contextOptions: SignOptions = { expiresIn: config.jwtExpiresIn as any };
       const contextToken = jwt.sign(
         {
           userId,
@@ -309,7 +356,7 @@ export class AuthService {
           type: 'context',
         },
         config.jwtSecret,
-        { expiresIn: config.jwtExpiresIn }
+        contextOptions
       );
 
       // Determinar URL de redirecionamento
@@ -328,6 +375,8 @@ export class AuthService {
           userEmail: '',
           action: 'SELECT_HOSPITAL',
           description: `Selecionou hospital: ${hospital.name}`,
+          ipAddress: 'unknown',
+          userAgent: 'unknown',
           metadata: {
             hospitalId,
             hospitalCode: hospital.code,

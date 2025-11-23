@@ -12,8 +12,8 @@ export const config = {
   
   // JWT
   jwtSecret: process.env.JWT_SECRET || 'lazarus-secret-key-change-in-production',
-  jwtExpiresIn: process.env.JWT_EXPIRES_IN || '24h',
-  jwtRefreshExpiresIn: process.env.JWT_REFRESH_EXPIRES_IN || '7d',
+  jwtExpiresIn: (process.env.JWT_EXPIRES_IN || '24h') as string,
+  jwtRefreshExpiresIn: (process.env.JWT_REFRESH_EXPIRES_IN || '7d') as string,
   
   // Azure AD
   azureAd: {

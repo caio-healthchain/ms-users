@@ -196,9 +196,7 @@ export class AuthController {
 
       const result = await authService.selectHospital(
         userId,
-        hospitalId,
-        ipAddress,
-        userAgent
+        hospitalId
       );
 
       res.json(result);
