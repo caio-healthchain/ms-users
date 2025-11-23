@@ -5,7 +5,7 @@ import { logger } from '../utils/logger';
 export class AuthController {
   /**
    * @swagger
-   * /auth/azure/callback:
+   * /users/auth/azure/callback:
    *   post:
    *     summary: Callback de autenticação Azure AD
    *     description: Recebe o código de autorização do Azure AD e retorna tokens JWT e lista de hospitais
@@ -79,7 +79,7 @@ export class AuthController {
 
   /**
    * @swagger
-   * /auth/refresh:
+   * /users/auth/refresh:
    *   post:
    *     summary: Renovar access token
    *     description: Renova o access token usando o refresh token
@@ -140,7 +140,7 @@ export class AuthController {
 
   /**
    * @swagger
-   * /auth/select-hospital:
+   * /users/auth/select-hospital:
    *   post:
    *     summary: Selecionar hospital
    *     description: Seleciona um hospital e retorna URL de redirecionamento com novo token

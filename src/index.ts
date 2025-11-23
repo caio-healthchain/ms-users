@@ -53,8 +53,8 @@ app.get('/health', (req: Request, res: Response) => {
 });
 
 // Routes
-app.use('/api/auth', authRoutes);
-app.use('/api/users', userRoutes);
+app.use('/users/auth', authRoutes);
+app.use('/users', userRoutes);
 
 // Root endpoint
 app.get('/', (req: Request, res: Response) => {
