@@ -35,19 +35,25 @@ export class AuthService {
 
       const azureUser = graphResponse.data;
 
-      logger.info(`Usuário autenticado: ${azureUser.mail || azureUser.userPrincipalName}`);
+      const userEmail = azureUser.mail || azureUser.userPrincipalName;
+      logger.info(`Usuário autenticado: ${userEmail}`);
 
-      // Buscar ou criar usuário no banco
-      let user = await prisma.user.findUnique({
-        where: { azureAdId: azureUser.id },
+      // Buscar usuário por email ou azureAdId
+      let user = await prisma.user.findFirst({
+        where: {
+          OR: [
+            { email: userEmail },
+            { azureAdId: azureUser.id },
+          ],
+        },
       });
 
       if (!user) {
         // Criar novo usuário
         user = await prisma.user.create({
           data: {
-            name: azureUser.displayName || azureUser.mail || azureUser.userPrincipalName,
-            email: azureUser.mail || azureUser.userPrincipalName,
+            name: azureUser.displayName || userEmail,
+            email: userEmail,
             azureAdId: azureUser.id,
             isActive: true,
           },
@@ -55,13 +61,16 @@ export class AuthService {
 
         logger.info(`Novo usuário criado: ${user.id}`);
       } else {
-        // Atualizar última autenticação
+        // Atualizar azureAdId se não existir e atualizar última autenticação
         user = await prisma.user.update({
           where: { id: user.id },
           data: {
+            azureAdId: azureUser.id,
             updatedAt: new Date(),
           },
         });
+        
+        logger.info(`Usuário existente atualizado: ${user.id}`);
       }
 
       // Buscar hospitais e perfis do usuário
