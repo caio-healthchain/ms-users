@@ -1,0 +1,200 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// Modelo de Usuário
+model User {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  // Informações básicas
+  name      String
+  email     String   @unique
+  cpf       String?  @unique
+  phone     String?
+  avatar    String?
+
+  // Azure AD Integration
+  azureAdId       String?  @unique
+  azureAdTenantId String?
+  
+  // Status
+  isActive Boolean @default(true)
+  
+  // Relacionamentos
+  userHospitalProfiles UserHospitalProfile[]
+  auditLogs            AuditLog[]
+
+  @@index([email])
+  @@index([azureAdId])
+  @@index([isActive])
+  @@map("users")
+}
+
+// Perfis disponíveis no sistema
+model Profile {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Informações do perfil
+  code        String   @unique // GERENCIAL, AUDITOR, ANALISTA
+  name        String   // Nome amigável
+  description String?
+  
+  // Módulos permitidos (JSON array)
+  allowedModules Json // ["gerencial", "auditor", "analista"]
+  
+  // Permissões (JSON)
+  permissions Json
+  
+  // Status
+  isActive Boolean @default(true)
+
+  // Relacionamentos
+  userHospitalProfiles UserHospitalProfile[]
+
+  @@index([code])
+  @@index([isActive])
+  @@map("profiles")
+}
+
+// Hospital (informações básicas - detalhes no ms-hospital-integration)
+model Hospital {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  // Identificação
+  code        String   @unique // h9j, hsl, etc
+  name        String
+  cnpj        String?  @unique
+  
+  // Configuração de tenant
+  subdomain   String   @unique // h9j-lazarus
+  customDomain String? @unique // lazarus.h9j.com.br
+  
+  // Azure AD Tenant (cada hospital pode ter seu próprio tenant)
+  azureTenantId String?
+  
+  // Logo e branding
+  logoUrl     String?
+  primaryColor String? // #1E40AF
+  
+  // Status
+  isActive Boolean @default(true)
+  
+  // Relacionamentos
+  userHospitalProfiles UserHospitalProfile[]
+
+  @@index([code])
+  @@index([subdomain])
+  @@index([isActive])
+  @@map("hospitals")
+}
+
+// Relacionamento N:N entre User, Hospital e Profile
+model UserHospitalProfile {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Relacionamentos
+  userId     String
+  hospitalId String
+  profileId  String
+  
+  user     User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  hospital Hospital @relation(fields: [hospitalId], references: [id], onDelete: Cascade)
+  profile  Profile  @relation(fields: [profileId], references: [id], onDelete: Cascade)
+  
+  // Status
+  isActive Boolean @default(true)
+  
+  // Metadados
+  grantedBy   String? // ID do usuário que concedeu o acesso
+  grantedAt   DateTime @default(now())
+  revokedBy   String?
+  revokedAt   DateTime?
+
+  @@unique([userId, hospitalId, profileId])
+  @@index([userId])
+  @@index([hospitalId])
+  @@index([profileId])
+  @@index([isActive])
+  @@map("user_hospital_profiles")
+}
+
+// Log de auditoria de ações de usuários
+model AuditLog {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+
+  // Usuário
+  userId   String
+  userName String
+  userEmail String
+  
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  // Ação
+  action      String // LOGIN, LOGOUT, ACCESS_HOSPITAL, CHANGE_PROFILE, etc
+  description String
+  
+  // Contexto
+  hospitalId String?
+  profileId  String?
+  
+  // Dados técnicos
+  ipAddress String
+  userAgent String
+  
+  // Metadados
+  metadata Json?
+
+  @@index([userId])
+  @@index([action])
+  @@index([createdAt])
+  @@index([hospitalId])
+  @@map("audit_logs")
+}
+
+// Sessões de usuário (para controle de acesso multi-tenant)
+model UserSession {
+  id        String   @id @default(cuid())
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  // Usuário
+  userId String
+  
+  // Hospital selecionado
+  hospitalId String
+  
+  // Token
+  accessToken  String   @unique
+  refreshToken String?  @unique
+  expiresAt    DateTime
+  
+  // Dados técnicos
+  ipAddress String
+  userAgent String
+  
+  // Status
+  isActive Boolean @default(true)
+  
+  @@index([userId])
+  @@index([hospitalId])
+  @@index([accessToken])
+  @@index([isActive])
+  @@index([expiresAt])
+  @@map("user_sessions")
+}
