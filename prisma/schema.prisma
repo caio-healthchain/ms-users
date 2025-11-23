@@ -164,7 +164,7 @@ model AuditLog {
   @@index([action])
   @@index([createdAt])
   @@index([hospitalId])
-  @@map("audit_logs")
+  @@map("auth_audit_logs")
 }
 
 // Sessões de usuário (para controle de acesso multi-tenant)
