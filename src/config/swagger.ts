@@ -29,7 +29,7 @@ const options: swaggerJsdoc.Options = {
           type: 'http',
           scheme: 'bearer',
           bearerFormat: 'JWT',
-          description: 'Token JWT obtido após autenticação Azure AD',
+          description: 'Token JWT interno obtido após login custom ou autenticação legada',
         },
       },
       schemas: {
@@ -90,6 +90,38 @@ const options: swaggerJsdoc.Options = {
             profile: { $ref: '#/components/schemas/Profile' },
             isActive: { type: 'boolean' },
             grantedAt: { type: 'string', format: 'date-time' },
+          },
+        },
+        CustomLoginRequest: {
+          type: 'object',
+          required: ['email', 'password'],
+          properties: {
+            email: {
+              type: 'string',
+              format: 'email',
+              description: 'Email do usuário Lazarus',
+              example: 'admin@lazarus.com',
+            },
+            password: {
+              type: 'string',
+              format: 'password',
+              description: 'Senha local do usuário',
+              example: '********',
+            },
+          },
+        },
+        AuthResponse: {
+          type: 'object',
+          properties: {
+            accessToken: { type: 'string', description: 'Token JWT interno para acesso à API' },
+            refreshToken: { type: 'string', description: 'Token interno para renovação' },
+            expiresIn: { type: 'number', example: 86400 },
+            user: { $ref: '#/components/schemas/User' },
+            hospitals: {
+              type: 'array',
+              items: { $ref: '#/components/schemas/UserHospitalProfile' },
+              description: 'Lista de hospitais e perfis ativos do usuário',
+            },
           },
         },
         AzureAuthRequest: {

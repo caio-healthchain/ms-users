@@ -1,11 +1,17 @@
 import { ConfidentialClientApplication, AuthorizationCodeRequest } from '@azure/msal-node';
 import { PrismaClient } from '@prisma/client';
 import jwt, { SignOptions } from 'jsonwebtoken';
+import bcrypt from 'bcryptjs';
 import axios from 'axios';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
 const prisma = new PrismaClient();
+
+export interface AuthRequestContext {
+  ipAddress?: string;
+  userAgent?: string;
+}
 
 // Configuração do MSAL (Microsoft Authentication Library)
 const msalConfig = {
@@ -19,6 +25,116 @@ const msalConfig = {
 const cca = new ConfidentialClientApplication(msalConfig);
 
 export class AuthService {
+
+  /**
+   * Autentica usuário com credencial local do IAM MVP custom.
+   *
+   * Este fluxo é a estratégia oficial da F02 no PRD-008 para o MVP:
+   * simples, tenant-aware por vínculo UserHospitalProfile e sem dependência de
+   * Azure AD/OIDC na fase inicial.
+   */
+  async authenticateWithPassword(email: string, password: string, context: AuthRequestContext = {}) {
+    try {
+      const normalizedEmail = email.trim().toLowerCase();
+      logger.info(`Iniciando autenticação custom para: ${normalizedEmail}`);
+
+      const user = await prisma.user.findUnique({
+        where: { email: normalizedEmail },
+      });
+
+      if (!user || !user.isActive || !user.passwordHash) {
+        throw new Error('Credenciais inválidas');
+      }
+
+      const isPasswordValid = await bcrypt.compare(password, user.passwordHash);
+
+      if (!isPasswordValid) {
+        await prisma.auditLog.create({
+          data: {
+            userId: user.id,
+            userName: user.name,
+            userEmail: user.email,
+            action: 'LOGIN_FAILED',
+            description: 'Falha de login custom por senha inválida',
+            ipAddress: context.ipAddress || 'unknown',
+            userAgent: context.userAgent || 'unknown',
+            metadata: { authProvider: 'custom' },
+          },
+        });
+
+        throw new Error('Credenciais inválidas');
+      }
+
+      const userHospitalProfiles = await this.getActiveHospitalProfiles(user.id);
+      const { accessToken, refreshToken } = this.generateTokens(user.id, user.email);
+
+      await prisma.auditLog.create({
+        data: {
+          userId: user.id,
+          userName: user.name,
+          userEmail: user.email,
+          action: 'LOGIN',
+          description: 'Login custom com email e senha',
+          ipAddress: context.ipAddress || 'unknown',
+          userAgent: context.userAgent || 'unknown',
+          metadata: { authProvider: 'custom' },
+        },
+      });
+
+      return {
+        accessToken,
+        refreshToken,
+        user: this.sanitizeUser(user),
+        hospitals: userHospitalProfiles,
+      };
+    } catch (error: any) {
+      logger.error('Erro na autenticação custom:', error);
+      throw error.message === 'Credenciais inválidas'
+        ? error
+        : new Error('Falha na autenticação custom');
+    }
+  }
+
+  /**
+   * Retorna o contexto completo do usuário autenticado para o endpoint /me.
+   */
+  async getAuthenticatedUser(userId: string) {
+    const user = await prisma.user.findFirst({
+      where: {
+        id: userId,
+        isActive: true,
+      },
+    });
+
+    if (!user) {
+      throw new Error('Usuário não encontrado ou inativo');
+    }
+
+    const userHospitalProfiles = await this.getActiveHospitalProfiles(user.id);
+
+    return {
+      user: this.sanitizeUser(user),
+      hospitals: userHospitalProfiles,
+    };
+  }
+
+  private getActiveHospitalProfiles(userId: string) {
+    return prisma.userHospitalProfile.findMany({
+      where: {
+        userId,
+        isActive: true,
+      },
+      include: {
+        hospital: true,
+        profile: true,
+      },
+    });
+  }
+
+  private sanitizeUser<T extends { passwordHash?: string | null }>(user: T) {
+    const { passwordHash, ...safeUser } = user;
+    return safeUser;
+  }
   /**
    * Autentica usuário via Azure AD usando access token já obtido
    */
@@ -74,16 +190,7 @@ export class AuthService {
       }
 
       // Buscar hospitais e perfis do usuário
-      const userHospitalProfiles = await prisma.userHospitalProfile.findMany({
-        where: {
-          userId: user.id,
-          isActive: true,
-        },
-        include: {
-          hospital: true,
-          profile: true,
-        },
-      });
+      const userHospitalProfiles = await this.getActiveHospitalProfiles(user.id);
 
       // Gerar tokens JWT internos
       const { accessToken, refreshToken } = this.generateTokens(user.id, user.email);
@@ -107,7 +214,7 @@ export class AuthService {
       return {
         accessToken,
         refreshToken,
-        user,
+        user: this.sanitizeUser(user),
         hospitals: userHospitalProfiles,
       };
     } catch (error: any) {
@@ -169,16 +276,7 @@ export class AuthService {
       }
 
       // Buscar hospitais e perfis do usuário
-      const userHospitalProfiles = await prisma.userHospitalProfile.findMany({
-        where: {
-          userId: user.id,
-          isActive: true,
-        },
-        include: {
-          hospital: true,
-          profile: true,
-        },
-      });
+      const userHospitalProfiles = await this.getActiveHospitalProfiles(user.id);
 
       // Gerar tokens JWT internos
       const { accessToken, refreshToken } = this.generateTokens(user.id, user.email);
@@ -203,7 +301,7 @@ export class AuthService {
       return {
         accessToken,
         refreshToken,
-        user,
+        user: this.sanitizeUser(user),
         hospitals: userHospitalProfiles,
       };
     } catch (error: any) {

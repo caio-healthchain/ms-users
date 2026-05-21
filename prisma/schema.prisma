@@ -21,6 +21,9 @@ model User {
   phone     String?
   avatar    String?
 
+  // Credencial local para IAM MVP custom (opcional para compatibilidade com Azure AD legado)
+  passwordHash String? @map("password_hash")
+
   // Azure AD Integration
   azureAdId       String?  @unique @map("azure_ad_id")
   azureAdTenantId String? @map("azure_ad_tenant_id")

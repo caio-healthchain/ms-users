@@ -3,6 +3,79 @@ import { authService } from '../services/auth.service';
 import { logger } from '../utils/logger';
 
 export class AuthController {
+
+  /**
+   * @swagger
+   * /users/auth/login:
+   *   post:
+   *     summary: Login custom com email e senha
+   *     description: Autentica o usuário pelo IAM MVP custom do Lazarus, sem Azure AD/OIDC na Fase 1.
+   *     tags: [Autenticação]
+   *     security: []
+   *     requestBody:
+   *       required: true
+   *       content:
+   *         application/json:
+   *           schema:
+   *             $ref: '#/components/schemas/CustomLoginRequest'
+   *     responses:
+   *       200:
+   *         description: Login realizado com sucesso
+   *         content:
+   *           application/json:
+   *             schema:
+   *               $ref: '#/components/schemas/AuthResponse'
+   *       400:
+   *         description: Email ou senha não informados
+   *       401:
+   *         description: Credenciais inválidas
+   *       500:
+   *         description: Erro interno do servidor
+   */
+  async customLogin(req: Request, res: Response) {
+    try {
+      const { email, password } = req.body;
+
+      if (!email || !password) {
+        return res.status(400).json({
+          error: 'Email e senha são obrigatórios',
+          statusCode: 400,
+        });
+      }
+
+      const result = await authService.authenticateWithPassword(email, password, {
+        ipAddress: req.ip || req.socket.remoteAddress || 'unknown',
+        userAgent: req.get('user-agent') || 'unknown',
+      });
+
+      logger.info(`Login custom bem-sucedido: ${result.user.email}`);
+
+      res.json({
+        accessToken: result.accessToken,
+        refreshToken: result.refreshToken,
+        expiresIn: 86400,
+        user: {
+          id: result.user.id,
+          name: result.user.name,
+          email: result.user.email,
+          avatar: result.user.avatar,
+        },
+        hospitals: result.hospitals.map((uhp) => ({
+          hospital: uhp.hospital,
+          profile: uhp.profile,
+        })),
+      });
+    } catch (error: any) {
+      const isInvalidCredentials = error.message === 'Credenciais inválidas';
+      logger.error('Erro no login custom:', error);
+      res.status(isInvalidCredentials ? 401 : 500).json({
+        error: isInvalidCredentials ? 'Credenciais inválidas' : 'Erro na autenticação',
+        message: isInvalidCredentials ? 'Email ou senha inválidos' : error.message,
+        statusCode: isInvalidCredentials ? 401 : 500,
+      });
+    }
+  }
+
   /**
    * @swagger
    * /users/auth/azure/callback:
@@ -291,14 +364,19 @@ export class AuthController {
         });
       }
 
+      const result = await authService.getAuthenticatedUser(userData.userId);
+
       res.json({
-        user: {
-          userId: userData.userId,
-          email: userData.email,
+        user: result.user,
+        hospitals: result.hospitals.map((uhp) => ({
+          hospital: uhp.hospital,
+          profile: uhp.profile,
+        })),
+        tokenContext: {
+          hospitalId: userData.hospitalId,
+          hospitalCode: userData.hospitalCode,
+          profiles: userData.profiles,
         },
-        hospitalId: userData.hospitalId,
-        hospitalCode: userData.hospitalCode,
-        profiles: userData.profiles,
       });
     } catch (error: any) {
       logger.error('Erro ao obter dados do usuário:', error);

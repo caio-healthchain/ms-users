@@ -8,10 +8,11 @@ const router = Router();
  * @swagger
  * tags:
  *   name: Autenticação
- *   description: Endpoints de autenticação Azure AD SSO
+ *   description: Endpoints de autenticação custom IAM MVP e compatibilidade Azure AD legada
  */
 
 // Rotas públicas (sem autenticação)
+router.post('/login', authController.customLogin.bind(authController));
 router.post('/azure/callback', authController.azureCallback.bind(authController));
 router.post('/refresh', authController.refresh.bind(authController));
 
