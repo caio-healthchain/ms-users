@@ -1,0 +1,72 @@
+name: Build and Push Docker Image to ACR
+
+on:
+  push:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+env:
+  ACR_NAME: lazarusimages
+  ACR_LOGIN_SERVER: lazarusimages.azurecr.io
+  IMAGE_NAME: ms-users
+
+jobs:
+  build-and-push:
+    name: Build and push ms-users image
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Azure login
+        uses: azure/login@v2
+        with:
+          client-id: ${{ secrets.AZURE_CLIENT_ID }}
+          tenant-id: ${{ secrets.AZURE_TENANT_ID }}
+          subscription-id: ${{ secrets.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Login to Azure Container Registry
+        run: az acr login --name $ACR_NAME
+
+      - name: Set Docker image tags
+        id: image
+        run: |
+          SHORT_SHA="${GITHUB_SHA::7}"
+          echo "sha_tag=${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${GITHUB_SHA}" >> "$GITHUB_OUTPUT"
+          echo "short_sha_tag=${ACR_LOGIN_SERVER}/${IMAGE_NAME}:${SHORT_SHA}" >> "$GITHUB_OUTPUT"
+          echo "latest_tag=${ACR_LOGIN_SERVER}/${IMAGE_NAME}:latest" >> "$GITHUB_OUTPUT"
+
+      - name: Build Docker image
+        run: |
+          docker build \
+            --label org.opencontainers.image.source="${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}" \
+            --label org.opencontainers.image.revision="${GITHUB_SHA}" \
+            --label org.opencontainers.image.created="$(date -u +'%Y-%m-%dT%H:%M:%SZ')" \
+            -t "${{ steps.image.outputs.sha_tag }}" \
+            -t "${{ steps.image.outputs.short_sha_tag }}" \
+            -t "${{ steps.image.outputs.latest_tag }}" \
+            .
+
+      - name: Push Docker image
+        run: |
+          docker push "${{ steps.image.outputs.sha_tag }}"
+          docker push "${{ steps.image.outputs.short_sha_tag }}"
+          docker push "${{ steps.image.outputs.latest_tag }}"
+
+      - name: Publish image summary
+        run: |
+          cat <<EOF >> "$GITHUB_STEP_SUMMARY"
+          ## ms-users image published
+
+          | Tag | Image |
+          |---|---|
+          | Full commit SHA | \`${{ steps.image.outputs.sha_tag }}\` |
+          | Short commit SHA | \`${{ steps.image.outputs.short_sha_tag }}\` |
+          | Latest | \`${{ steps.image.outputs.latest_tag }}\` |
+          EOF
