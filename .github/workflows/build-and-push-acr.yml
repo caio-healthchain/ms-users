@@ -37,28 +37,40 @@ jobs:
       - name: Diagnose Azure and ACR authorization
         env:
           AZURE_CLIENT_ID: ${{ secrets.AZURE_CLIENT_ID }}
+          EXPECTED_ACR_SUBSCRIPTION_ID: df617ebe-6f79-4935-80eb-a2163b3fe212
         run: |
-          set -euo pipefail
+          set -uo pipefail
 
           echo "## Azure context"
-          az account show \
-            --query "{subscriptionId:id, tenantId:tenantId, userName:user.name, userType:user.type}" \
-            --output json
+          CURRENT_SUBSCRIPTION_ID="$(az account show --query id --output tsv 2>/dev/null || true)"
+          CURRENT_TENANT_ID="$(az account show --query tenantId --output tsv 2>/dev/null || true)"
+          CURRENT_USER_TYPE="$(az account show --query user.type --output tsv 2>/dev/null || true)"
+          echo "Current subscription matches expected ACR subscription: $([ "$CURRENT_SUBSCRIPTION_ID" = "$EXPECTED_ACR_SUBSCRIPTION_ID" ] && echo yes || echo no)"
+          echo "Current subscription suffix: ${CURRENT_SUBSCRIPTION_ID: -6}"
+          echo "Current tenant suffix: ${CURRENT_TENANT_ID: -6}"
+          echo "Current user type: ${CURRENT_USER_TYPE}"
 
           echo "## ACR metadata"
-          ACR_ID="$(az acr show --name "$ACR_NAME" --query id --output tsv)"
-          echo "ACR resource id: ${ACR_ID}"
-          az acr show \
-            --name "$ACR_NAME" \
-            --query "{name:name, loginServer:loginServer, sku:sku.name, adminUserEnabled:adminUserEnabled, publicNetworkAccess:publicNetworkAccess, networkRuleBypassOptions:networkRuleBypassOptions, anonymousPullEnabled:anonymousPullEnabled, dataEndpointEnabled:dataEndpointEnabled, policies:policies}" \
-            --output json
+          ACR_ID="$(az acr show --name "$ACR_NAME" --query id --output tsv 2>/tmp/acr_show_error.txt || true)"
+          if [ -n "$ACR_ID" ]; then
+            echo "ACR found: yes"
+            echo "ACR resource id suffix: ${ACR_ID: -80}"
+            az acr show \
+              --name "$ACR_NAME" \
+              --query "{name:name, loginServer:loginServer, sku:sku.name, adminUserEnabled:adminUserEnabled, publicNetworkAccess:publicNetworkAccess, networkRuleBypassOptions:networkRuleBypassOptions, anonymousPullEnabled:anonymousPullEnabled, dataEndpointEnabled:dataEndpointEnabled, policies:policies}" \
+              --output json || true
 
-          echo "## Role assignments for configured service principal at ACR scope"
-          az role assignment list \
-            --assignee "$AZURE_CLIENT_ID" \
-            --scope "$ACR_ID" \
-            --query "[].{role:roleDefinitionName, principalType:principalType, principalName:principalName, scope:scope}" \
-            --output table || true
+            echo "## Role assignments for configured service principal at ACR scope"
+            az role assignment list \
+              --assignee "$AZURE_CLIENT_ID" \
+              --scope "$ACR_ID" \
+              --query "[].{role:roleDefinitionName, principalType:principalType, principalName:principalName, scope:scope}" \
+              --output table || true
+          else
+            echo "ACR found: no"
+            echo "::warning::az acr show failed; sanitized error follows. The workflow will continue to build/push so we can validate the Docker data-plane error as well."
+            sed -E 's/[0-9a-fA-F-]{36}/***GUID***/g' /tmp/acr_show_error.txt || true
+          fi
 
           echo "## Repository read probe"
           az acr repository list \
