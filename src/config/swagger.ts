@@ -29,7 +29,7 @@ const options: swaggerJsdoc.Options = {
           type: 'http',
           scheme: 'bearer',
           bearerFormat: 'JWT',
-          description: 'Token JWT interno obtido após login custom ou autenticação legada',
+          description: 'Token JWT interno obtido após login custom',
         },
       },
       schemas: {
@@ -42,7 +42,6 @@ const options: swaggerJsdoc.Options = {
             cpf: { type: 'string', example: '123.456.789-00' },
             phone: { type: 'string', example: '(11) 98765-4321' },
             avatar: { type: 'string', example: 'https://avatar.url/image.jpg' },
-            azureAdId: { type: 'string', example: 'azure-ad-object-id' },
             isActive: { type: 'boolean', example: true },
             createdAt: { type: 'string', format: 'date-time' },
             updatedAt: { type: 'string', format: 'date-time' },
@@ -121,31 +120,6 @@ const options: swaggerJsdoc.Options = {
               type: 'array',
               items: { $ref: '#/components/schemas/UserHospitalProfile' },
               description: 'Lista de hospitais e perfis ativos do usuário',
-            },
-          },
-        },
-        AzureAuthRequest: {
-          type: 'object',
-          required: ['code'],
-          properties: {
-            code: {
-              type: 'string',
-              description: 'Código de autorização retornado pelo Azure AD',
-              example: 'azure-auth-code-123',
-            },
-          },
-        },
-        AzureAuthResponse: {
-          type: 'object',
-          properties: {
-            accessToken: { type: 'string', description: 'Token JWT para acesso à API' },
-            refreshToken: { type: 'string', description: 'Token para renovação' },
-            expiresIn: { type: 'number', example: 86400 },
-            user: { $ref: '#/components/schemas/User' },
-            hospitals: {
-              type: 'array',
-              items: { $ref: '#/components/schemas/UserHospitalProfile' },
-              description: 'Lista de hospitais e perfis do usuário',
             },
           },
         },

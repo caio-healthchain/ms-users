@@ -1,8 +1,6 @@
-import { ConfidentialClientApplication, AuthorizationCodeRequest } from '@azure/msal-node';
 import { PrismaClient } from '@prisma/client';
 import jwt, { SignOptions } from 'jsonwebtoken';
 import bcrypt from 'bcryptjs';
-import axios from 'axios';
 import { config } from '../config';
 import { logger } from '../utils/logger';
 
@@ -13,25 +11,13 @@ export interface AuthRequestContext {
   userAgent?: string;
 }
 
-// Configuração do MSAL (Microsoft Authentication Library)
-const msalConfig = {
-  auth: {
-    clientId: config.azureAd.clientId,
-    authority: `${config.azureAd.authority}${config.azureAd.tenantId}`,
-    clientSecret: config.azureAd.clientSecret,
-  },
-};
-
-const cca = new ConfidentialClientApplication(msalConfig);
-
 export class AuthService {
 
   /**
-   * Autentica usuário com credencial local do IAM MVP custom.
+   * Autentica usuário com credencial local do IAM custom.
    *
-   * Este fluxo é a estratégia oficial da F02 no PRD-008 para o MVP:
-   * simples, tenant-aware por vínculo UserHospitalProfile e sem dependência de
-   * Azure AD/OIDC na fase inicial.
+   * Este fluxo é a estratégia oficial do ms-users: simples, tenant-aware
+   * por vínculo UserHospitalProfile e baseado em tokens JWT internos.
    */
   async authenticateWithPassword(email: string, password: string, context: AuthRequestContext = {}) {
     try {
@@ -135,181 +121,6 @@ export class AuthService {
     const { passwordHash, ...safeUser } = user;
     return safeUser;
   }
-  /**
-   * Autentica usuário via Azure AD usando access token já obtido
-   */
-  async authenticateWithAzureToken(azureAccessToken: string, azureIdToken?: string) {
-    try {
-      logger.info('Iniciando autenticação com Azure AD Token');
-
-      // Validar token e obter informações do usuário do Microsoft Graph
-      const graphResponse = await axios.get('https://graph.microsoft.com/v1.0/me', {
-        headers: {
-          Authorization: `Bearer ${azureAccessToken}`,
-        },
-      });
-
-      const azureUser = graphResponse.data;
-
-      const userEmail = azureUser.mail || azureUser.userPrincipalName;
-      logger.info(`Usuário autenticado: ${userEmail}`);
-
-      // Buscar usuário por email ou azureAdId
-      let user = await prisma.user.findFirst({
-        where: {
-          OR: [
-            { email: userEmail },
-            { azureAdId: azureUser.id },
-          ],
-        },
-      });
-
-      if (!user) {
-        // Criar novo usuário
-        user = await prisma.user.create({
-          data: {
-            name: azureUser.displayName || userEmail,
-            email: userEmail,
-            azureAdId: azureUser.id,
-            isActive: true,
-          },
-        });
-
-        logger.info(`Novo usuário criado: ${user.id}`);
-      } else {
-        // Atualizar azureAdId se não existir e atualizar última autenticação
-        user = await prisma.user.update({
-          where: { id: user.id },
-          data: {
-            azureAdId: azureUser.id,
-            updatedAt: new Date(),
-          },
-        });
-        
-        logger.info(`Usuário existente atualizado: ${user.id}`);
-      }
-
-      // Buscar hospitais e perfis do usuário
-      const userHospitalProfiles = await this.getActiveHospitalProfiles(user.id);
-
-      // Gerar tokens JWT internos
-      const { accessToken, refreshToken } = this.generateTokens(user.id, user.email);
-
-      // Registrar log de auditoria
-      await prisma.auditLog.create({
-        data: {
-          userId: user.id,
-          userName: user.name,
-          userEmail: user.email,
-          action: 'LOGIN',
-          description: 'Login via Azure AD SSO',
-          ipAddress: 'unknown', // Será preenchido pelo controller
-          userAgent: 'unknown', // Será preenchido pelo controller
-          metadata: {
-            azureAdId: user.azureAdId,
-          },
-        },
-      });
-
-      return {
-        accessToken,
-        refreshToken,
-        user: this.sanitizeUser(user),
-        hospitals: userHospitalProfiles,
-      };
-    } catch (error: any) {
-      logger.error('Erro na autenticação Azure AD:', error);
-      throw new Error(`Falha na autenticação: ${error.message}`);
-    }
-  }
-
-  /**
-   * Autentica usuário via Azure AD usando código de autorização (método antigo)
-   */
-  async authenticateWithAzureAd(authCode: string) {
-    try {
-      logger.info('Iniciando autenticação Azure AD');
-
-      // Trocar código por token
-      const tokenRequest: AuthorizationCodeRequest = {
-        code: authCode,
-        scopes: ['User.Read', 'openid', 'profile', 'email'],
-        redirectUri: config.azureAd.redirectUri,
-      };
-
-      const response = await cca.acquireTokenByCode(tokenRequest);
-
-      if (!response || !response.account) {
-        throw new Error('Falha ao obter token do Azure AD');
-      }
-
-      const { account, accessToken: azureAccessToken } = response;
-
-      logger.info(`Usuário autenticado: ${account.username}`);
-
-      // Buscar ou criar usuário no banco
-      let user = await prisma.user.findUnique({
-        where: { azureAdId: account.homeAccountId },
-      });
-
-      if (!user) {
-        // Criar novo usuário
-        user = await prisma.user.create({
-          data: {
-            name: account.name || account.username,
-            email: account.username,
-            azureAdId: account.homeAccountId,
-            azureAdTenantId: account.tenantId,
-            isActive: true,
-          },
-        });
-
-        logger.info(`Novo usuário criado: ${user.id}`);
-      } else {
-        // Atualizar última autenticação
-        user = await prisma.user.update({
-          where: { id: user.id },
-          data: {
-            updatedAt: new Date(),
-          },
-        });
-      }
-
-      // Buscar hospitais e perfis do usuário
-      const userHospitalProfiles = await this.getActiveHospitalProfiles(user.id);
-
-      // Gerar tokens JWT internos
-      const { accessToken, refreshToken } = this.generateTokens(user.id, user.email);
-
-      // Registrar log de auditoria
-      await prisma.auditLog.create({
-        data: {
-          userId: user.id,
-          userName: user.name,
-          userEmail: user.email,
-          action: 'LOGIN',
-          description: 'Login via Azure AD SSO',
-          ipAddress: 'unknown', // Será preenchido pelo controller
-          userAgent: 'unknown', // Será preenchido pelo controller
-          metadata: {
-            azureAdId: user.azureAdId,
-            tenantId: user.azureAdTenantId,
-          },
-        },
-      });
-
-      return {
-        accessToken,
-        refreshToken,
-        user: this.sanitizeUser(user),
-        hospitals: userHospitalProfiles,
-      };
-    } catch (error: any) {
-      logger.error('Erro na autenticação Azure AD:', error);
-      throw new Error(`Falha na autenticação: ${error.message}`);
-    }
-  }
-
   /**
    * Gera tokens JWT para autenticação interna
    */

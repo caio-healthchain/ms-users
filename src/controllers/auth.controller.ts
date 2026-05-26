@@ -9,7 +9,7 @@ export class AuthController {
    * /users/auth/login:
    *   post:
    *     summary: Login custom com email e senha
-   *     description: Autentica o usuário pelo IAM MVP custom do Lazarus, sem Azure AD/OIDC na Fase 1.
+   *     description: Autentica o usuário pelo IAM custom do Lazarus usando credenciais locais e tokens JWT internos.
    *     tags: [Autenticação]
    *     security: []
    *     requestBody:
@@ -72,87 +72,6 @@ export class AuthController {
         error: isInvalidCredentials ? 'Credenciais inválidas' : 'Erro na autenticação',
         message: isInvalidCredentials ? 'Email ou senha inválidos' : error.message,
         statusCode: isInvalidCredentials ? 401 : 500,
-      });
-    }
-  }
-
-  /**
-   * @swagger
-   * /users/auth/azure/callback:
-   *   post:
-   *     summary: Callback de autenticação Azure AD
-   *     description: Recebe o código de autorização do Azure AD e retorna tokens JWT e lista de hospitais
-   *     tags: [Autenticação]
-   *     security: []
-   *     requestBody:
-   *       required: true
-   *       content:
-   *         application/json:
-   *           schema:
-   *             $ref: '#/components/schemas/AzureAuthRequest'
-   *     responses:
-   *       200:
-   *         description: Autenticação realizada com sucesso
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/AzureAuthResponse'
-   *       400:
-   *         description: Código de autorização inválido
-   *         content:
-   *           application/json:
-   *             schema:
-   *               $ref: '#/components/schemas/Error'
-   *       500:
-   *         description: Erro interno do servidor
-   */
-  async azureCallback(req: Request, res: Response) {
-    try {
-      const { code, azureAccessToken, azureIdToken } = req.body;
-
-      // Suportar ambos os fluxos: código de autorização ou access token
-      let result;
-      
-      if (azureAccessToken) {
-        // Novo fluxo: validar access token do Azure AD
-        result = await authService.authenticateWithAzureToken(azureAccessToken, azureIdToken);
-      } else if (code) {
-        // Fluxo antigo: trocar código por token
-        result = await authService.authenticateWithAzureAd(code);
-      } else {
-        return res.status(400).json({
-          error: 'Código de autorização ou access token não fornecido',
-          statusCode: 400,
-        });
-      }
-
-      // Atualizar logs com IP e User-Agent
-      const ipAddress = req.ip || req.socket.remoteAddress || 'unknown';
-      const userAgent = req.get('user-agent') || 'unknown';
-
-      logger.info(`Login bem-sucedido: ${result.user.email} de ${ipAddress}`);
-
-      res.json({
-        accessToken: result.accessToken,
-        refreshToken: result.refreshToken,
-        expiresIn: 86400, // 24 horas
-        user: {
-          id: result.user.id,
-          name: result.user.name,
-          email: result.user.email,
-          avatar: result.user.avatar,
-        },
-        hospitals: result.hospitals.map((uhp) => ({
-          hospital: uhp.hospital,
-          profile: uhp.profile,
-        })),
-      });
-    } catch (error: any) {
-      logger.error('Erro no callback Azure AD:', error);
-      res.status(500).json({
-        error: 'Erro na autenticação',
-        message: error.message,
-        statusCode: 500,
       });
     }
   }

@@ -61,7 +61,7 @@ app.get('/', (req: Request, res: Response) => {
   res.json({
     service: 'Lazarus Users API',
     version: '1.0.0',
-    description: 'API de gerenciamento de usuários e autenticação Azure AD SSO',
+    description: 'API de gerenciamento de usuários e autenticação custom IAM/JWT',
     documentation: '/api-docs',
     health: '/health',
   });
